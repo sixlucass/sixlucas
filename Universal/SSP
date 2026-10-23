@@ -1,0 +1,2585 @@
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local HttpService = game:GetService("HttpService")
+local MarketplaceService = game:GetService("MarketplaceService")
+local TeleportService = game:GetService("TeleportService")
+local StarterGui = game:GetService("StarterGui")
+local GuiService = game:GetService("GuiService")
+local VirtualUser
+pcall(function()
+	VirtualUser = game:GetService("VirtualUser")
+end)
+
+local LocalPlayer = Players.LocalPlayer
+
+local toggleKey = Enum.KeyCode.RightShift
+local title = "SS By sixlucas"
+
+local env = typeof(getgenv) == "function" and getgenv() or _G
+if env.__PlayerSniper then
+	pcall(env.__PlayerSniper.Destroy, true)
+end
+
+local col = {
+	bg = Color3.fromRGB(13, 13, 13),
+	panel = Color3.fromRGB(30, 30, 30),
+	panelHi = Color3.fromRGB(38, 38, 38),
+	button = Color3.fromRGB(56, 56, 56),
+	buttonHi = Color3.fromRGB(72, 72, 72),
+	active = Color3.fromRGB(84, 84, 84),
+	icon = Color3.fromRGB(193, 193, 193),
+	dim = Color3.fromRGB(120, 120, 120),
+	white = Color3.fromRGB(255, 255, 255),
+	red = Color3.fromRGB(255, 57, 57),
+	blue = Color3.fromRGB(94, 115, 255),
+	yellow = Color3.fromRGB(238, 255, 131),
+	green = Color3.fromRGB(110, 255, 150),
+	orange = Color3.fromRGB(251, 146, 60),
+}
+
+local roboto = "rbxasset://fonts/families/RobotoCondensed.json"
+local fontBold = Font.new(roboto, Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+local fontReg = Font.new(roboto, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+local fontItalic = Font.new(roboto, Enum.FontWeight.Regular, Enum.FontStyle.Italic)
+
+local function getEnum(enum, item)
+	local ok, v = pcall(function()
+		return Enum[enum][item]
+	end)
+	return ok and v or nil
+end
+
+local strokeInner = getEnum("BorderStrokePosition", "Inner")
+
+local function create(class, props, children)
+	local ok, inst = pcall(Instance.new, class)
+	if not ok then
+		return nil
+	end
+	local parent
+	for k, v in pairs(props or {}) do
+		if k == "Parent" then
+			parent = v
+		else
+			pcall(function()
+				inst[k] = v
+			end)
+		end
+	end
+	for _, child in pairs(children or {}) do
+		child.Parent = inst
+	end
+	if parent then
+		inst.Parent = parent
+	end
+	return inst
+end
+
+local function corner(r)
+	return create("UICorner", {CornerRadius = UDim.new(0, r or 8)})
+end
+
+local function stroke(t)
+	return create("UIStroke", {Color = col.white, Transparency = t or 0.86, BorderStrokePosition = strokeInner})
+end
+
+local function tween(obj, t, props, style, dir)
+	local tw = TweenService:Create(obj, TweenInfo.new(t, style or Enum.EasingStyle.Quint, dir or Enum.EasingDirection.Out), props)
+	tw:Play()
+	return tw
+end
+
+local function label(props)
+	props.BackgroundTransparency = 1
+	props.BorderSizePixel = 0
+	props.TextScaled = props.TextScaled ~= false
+	props.TextWrapped = true
+	props.AnchorPoint = props.AnchorPoint or Vector2.new(0.5, 0.5)
+	props.FontFace = props.FontFace or fontReg
+	props.TextColor3 = props.TextColor3 or col.white
+	return create("TextLabel", props)
+end
+
+local function text(parent, props)
+	props.TextScaled = false
+	props.AnchorPoint = Vector2.new(0, 0)
+	props.TextXAlignment = props.TextXAlignment or Enum.TextXAlignment.Left
+	props.TextTruncate = props.TextTruncate or Enum.TextTruncate.AtEnd
+	props.Parent = parent
+	return label(props)
+end
+
+local function isClick(input)
+	local t = input.UserInputType
+	return t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch
+end
+
+local function copy(str)
+	local fn = setclipboard or toclipboard or set_clipboard or (Clipboard and Clipboard.set)
+	return fn ~= nil and (pcall(fn, tostring(str)))
+end
+
+local connections = {}
+local function bind(signal, fn)
+	local c = signal:Connect(fn)
+	table.insert(connections, c)
+	return c
+end
+
+local function mount(gui)
+	local parents = {}
+	if typeof(gethui) == "function" then
+		table.insert(parents, gethui)
+	end
+	table.insert(parents, function()
+		return game:GetService("CoreGui")
+	end)
+	table.insert(parents, function()
+		return LocalPlayer:WaitForChild("PlayerGui")
+	end)
+	for _, get in ipairs(parents) do
+		if pcall(function() gui.Parent = get() end) and gui.Parent then
+			return
+		end
+	end
+end
+
+local isOpen, destroyed = false, false
+local snipe, setTabByName, refreshServer
+local current
+local autoSnipe = false
+local antiAfk = true
+local setAutoSnipe, setAntiAfk
+local positiveId
+local tryAutoJoin, startAutoPoll, joinCurrent
+local getFriends, getPresenceBatch
+
+local fadeProps = {
+	{"GuiObject", "BackgroundTransparency"},
+	{"TextLabel", "TextTransparency"},
+	{"TextButton", "TextTransparency"},
+	{"TextBox", "TextTransparency"},
+	{"ImageLabel", "ImageTransparency"},
+	{"ImageButton", "ImageTransparency"},
+	{"ScrollingFrame", "ScrollBarImageTransparency"},
+	{"UIStroke", "Transparency"},
+}
+
+local originals = {}
+local fadeExclude = {}
+
+local function getOriginal(inst)
+	local o = originals[inst]
+	if o then
+		return o
+	end
+	o = {}
+	for _, pair in ipairs(fadeProps) do
+		local okIs, is = pcall(inst.IsA, inst, pair[1])
+		if okIs and is then
+			local ok, v = pcall(function()
+				return inst[pair[2]]
+			end)
+			if ok and type(v) == "number" then
+				o[pair[2]] = v
+			end
+		end
+	end
+	originals[inst] = o
+	inst.Destroying:Connect(function()
+		originals[inst] = nil
+	end)
+	return o
+end
+
+local function isExcluded(inst)
+	for _, root in ipairs(fadeExclude) do
+		if inst == root or inst:IsDescendantOf(root) then
+			return true
+		end
+	end
+	return false
+end
+
+local function fade(root, alpha, t)
+	local list = root:GetDescendants()
+	table.insert(list, root)
+	for _, inst in ipairs(list) do
+		if not isExcluded(inst) then
+			local goal
+			for prop, v in pairs(getOriginal(inst)) do
+				goal = goal or {}
+				goal[prop] = v + (1 - v) * (1 - alpha)
+			end
+			if goal then
+				if t and t > 0 then
+					tween(inst, t, goal, Enum.EasingStyle.Quad)
+				else
+					for p, v in pairs(goal) do
+						pcall(function()
+							inst[p] = v
+						end)
+					end
+				end
+			end
+		end
+	end
+end
+
+local glyphs = "!<>-_\\/[]{}=+*^?#@$%&"
+local scrambleIds = {}
+
+local function scramble(lbl, str, duration)
+	local id = (scrambleIds[lbl] or 0) + 1
+	scrambleIds[lbl] = id
+	task.spawn(function()
+		local start, len = os.clock(), #str
+		while lbl.Parent and scrambleIds[lbl] == id do
+			local p = (os.clock() - start) / duration
+			if p >= 1 then
+				break
+			end
+			local revealed = math.floor(p * len)
+			local out = table.create(len)
+			for i = 1, len do
+				local ch = str:sub(i, i)
+				if i <= revealed or ch == " " then
+					out[i] = ch
+				else
+					local r = math.random(1, #glyphs)
+					out[i] = glyphs:sub(r, r)
+				end
+			end
+			lbl.Text = table.concat(out)
+			task.wait(0.03)
+		end
+		if scrambleIds[lbl] == id then
+			lbl.Text = str
+		end
+	end)
+end
+
+local Lucide
+pcall(function()
+	Lucide = loadstring(game:HttpGet("https://github.com/latte-soft/lucide-roblox/releases/latest/download/lucide-roblox.luau"))()
+end)
+
+local function lucide(img, names)
+	if not Lucide then
+		return false
+	end
+	for _, n in ipairs(type(names) == "table" and names or {names}) do
+		local ok, a = pcall(Lucide.GetAsset, n, 48)
+		if ok and a then
+			img.Image = a.Url
+			img.ImageRectSize = a.ImageRectSize
+			img.ImageRectOffset = a.ImageRectOffset
+			return true
+		end
+	end
+	return false
+end
+
+local function iconIn(parent, names, size, color)
+	local i = create("ImageLabel", {
+		Name = "Icon",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = size,
+		BackgroundTransparency = 1,
+		ImageColor3 = color or col.icon,
+		Parent = parent,
+	}, {create("UIAspectRatioConstraint")})
+	lucide(i, names)
+	return i
+end
+
+local ScreenGui = create("ScreenGui", {
+	Name = "PlayerSniperUI",
+	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+	ResetOnSpawn = false,
+	IgnoreGuiInset = true,
+	DisplayOrder = 999,
+})
+mount(ScreenGui)
+
+local MainScale = create("UIScale", {Scale = 1})
+
+local Main = create("Frame", {
+	Name = "Main",
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.fromScale(0.285, 0.439),
+	BackgroundColor3 = col.bg,
+	BorderSizePixel = 0,
+	Visible = false,
+	ZIndex = 2,
+	Parent = ScreenGui,
+}, {
+	corner(),
+	create("UIStroke", {Color = col.white, Transparency = 0.74}),
+	create("UIAspectRatioConstraint", {AspectRatio = 1.2415}),
+	create("UISizeConstraint", {MinSize = Vector2.new(380, 306)}),
+	MainScale,
+})
+
+local idle = {bg = col.button, ic = col.icon}
+local hover = {bg = col.buttonHi, ic = col.white}
+local navActive = {bg = col.active, ic = col.white}
+local flat = {bg = col.panel}
+local flatHover = {bg = col.buttonHi}
+
+local function paint(btn, state, t)
+	local ic = btn:FindFirstChild("Icon")
+	if t and t > 0 then
+		tween(btn, t, {BackgroundColor3 = state.bg})
+		if ic and ic:IsA("ImageLabel") and state.ic then
+			tween(ic, t, {ImageColor3 = state.ic})
+		end
+	else
+		btn.BackgroundColor3 = state.bg
+		if ic and ic:IsA("ImageLabel") and state.ic then
+			ic.ImageColor3 = state.ic
+		end
+	end
+end
+
+local function buttonFx(btn, normal, hovered, isActive)
+	normal = normal or idle
+	hovered = hovered or hover
+	local scale = btn:FindFirstChildOfClass("UIScale") or create("UIScale", {Parent = btn})
+	local function active()
+		return isActive and isActive()
+	end
+	btn.MouseEnter:Connect(function()
+		if not active() then
+			paint(btn, hovered, 0.08)
+		end
+	end)
+	btn.MouseLeave:Connect(function()
+		tween(scale, 0.12, {Scale = 1})
+		if not active() then
+			paint(btn, normal, 0.12)
+		end
+	end)
+	btn.MouseButton1Down:Connect(function()
+		tween(scale, 0.05, {Scale = 0.9})
+	end)
+	btn.MouseButton1Up:Connect(function()
+		tween(scale, 0.2, {Scale = 1}, Enum.EasingStyle.Back)
+	end)
+end
+
+local function iconButton(props, names, iconSize)
+	props.BackgroundColor3 = props.BackgroundColor3 or col.button
+	props.BorderSizePixel = 0
+	props.Text = ""
+	props.AutoButtonColor = false
+	local b = create("TextButton", props, {corner(), stroke(), create("UIScale")})
+	iconIn(b, names, iconSize or UDim2.fromScale(0.5, 0.5))
+	return b
+end
+
+local TopBar = create("Frame", {
+	Name = "TopBar",
+	Size = UDim2.fromScale(1, 0.125),
+	BackgroundColor3 = col.panel,
+	BorderSizePixel = 0,
+	Parent = Main,
+}, {
+	create("UICorner", {BottomLeftRadius = UDim.new(0, 0), BottomRightRadius = UDim.new(0, 0)}),
+})
+
+local TitleCat = create("ImageLabel", {
+	Name = "TitleCat",
+	AnchorPoint = Vector2.new(0, 0.5),
+	Position = UDim2.new(0, 10, 0.5, 0),
+	Size = UDim2.fromOffset(15, 15),
+	BackgroundTransparency = 1,
+	ImageColor3 = col.white,
+	Parent = TopBar,
+}, {create("UIAspectRatioConstraint")})
+lucide(TitleCat, {"cat", "paw-print"})
+
+local Title = label({
+	Name = "Title",
+	AnchorPoint = Vector2.new(0, 0.5),
+	Position = UDim2.new(0, 30, 0.5, 0),
+	Size = UDim2.fromScale(0.78, 0.386),
+	Text = title,
+	FontFace = fontBold,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Parent = TopBar,
+})
+
+local CloseButton = iconButton({
+	Name = "CloseButton",
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.948, 0.5),
+	Size = UDim2.fromScale(0.069, 0.693),
+	Parent = TopBar,
+}, "x", UDim2.fromScale(0.5, 0.5))
+buttonFx(CloseButton, idle, {bg = Color3.fromRGB(150, 40, 40), ic = col.white})
+
+local BottomBar = create("Frame", {
+	Name = "BottomBar",
+	AnchorPoint = Vector2.new(0, 1),
+	Position = UDim2.fromScale(0, 1),
+	Size = UDim2.fromScale(1, 0.125),
+	BackgroundColor3 = col.panel,
+	BorderSizePixel = 0,
+	Parent = Main,
+}, {
+	create("UICorner", {TopLeftRadius = UDim.new(0, 0), TopRightRadius = UDim.new(0, 0)}),
+})
+
+local ButtonContainer = create("Frame", {
+	Name = "ButtonContainer",
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.fromScale(0.9588, 0.636),
+	BackgroundTransparency = 1,
+	Parent = BottomBar,
+}, {
+	create("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		HorizontalAlignment = Enum.HorizontalAlignment.Center,
+		VerticalAlignment = Enum.VerticalAlignment.Center,
+		Padding = UDim.new(0, 4),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}),
+})
+
+local Indicator = create("Frame", {
+	Name = "TabIndicator",
+	AnchorPoint = Vector2.new(0.5, 1),
+	Position = UDim2.new(0, 0, 1, -2),
+	Size = UDim2.fromOffset(14, 2),
+	BackgroundColor3 = col.white,
+	BorderSizePixel = 0,
+	ZIndex = 3,
+	Parent = BottomBar,
+}, {corner(1)})
+
+local function navButton(name, icon, order)
+	return iconButton({
+		Name = name,
+		LayoutOrder = order,
+		Size = UDim2.fromScale(0.08, 1),
+		Parent = ButtonContainer,
+	}, icon, UDim2.fromScale(0.52, 0.52))
+end
+
+local SniperButton = navButton("SniperButton", "crosshair", 1)
+
+local ServerButton = navButton("ServerButton", {"users", "users-round"}, 2)
+
+local SettingsButton = navButton("SettingsButton", {"settings", "settings-2", "cog"}, 3)
+
+local SectionsContainer = create("Frame", {
+	Name = "SectionsContainer",
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.fromScale(0.938, 0.665),
+	BackgroundTransparency = 1,
+	ClipsDescendants = true,
+	Parent = Main,
+})
+
+local emptyLabels = {}
+
+local function makeScreen(name, scrolling)
+	if not scrolling then
+		return create("Frame", {
+			Name = name,
+			Size = UDim2.fromScale(1, 1),
+			BackgroundTransparency = 1,
+			Visible = false,
+			Parent = SectionsContainer,
+		})
+	end
+
+	local sf = create("ScrollingFrame", {
+		Name = name,
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Visible = false,
+		ScrollBarThickness = 3,
+		ScrollBarImageColor3 = col.button,
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+		Parent = SectionsContainer,
+	}, {
+		create("UIListLayout", {Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder}),
+		create("UIPadding", {PaddingTop = UDim.new(0, 1), PaddingBottom = UDim.new(0, 1), PaddingLeft = UDim.new(0, 1)}),
+	})
+
+	local empty = label({
+		Name = "Empty",
+		AnchorPoint = Vector2.new(0, 0),
+		Size = UDim2.new(1, -8, 0, 40),
+		Text = "Nothing here yet.",
+		TextScaled = false,
+		TextSize = 14,
+		TextColor3 = col.dim,
+		LayoutOrder = -1e9,
+		Parent = sf,
+	})
+	emptyLabels[sf] = empty
+
+	local function refresh()
+		for _, child in ipairs(sf:GetChildren()) do
+			if child:GetAttribute("IsRow") and not child:GetAttribute("IsHeader") then
+				empty.Visible = false
+				return
+			end
+		end
+		empty.Visible = true
+	end
+	sf.ChildAdded:Connect(refresh)
+	sf.ChildRemoved:Connect(refresh)
+
+	return sf
+end
+
+local SniperScreen = makeScreen("SniperScreen", false)
+local ServerList = makeScreen("ServerList", true)
+local SettingsScreen = makeScreen("SettingsScreen", true)
+
+emptyLabels[ServerList].Text = "Nobody is in your server or online.\nSearch a player above."
+emptyLabels[ServerList].LayoutOrder = 100
+
+local ToastStroke = create("UIStroke", {Color = col.white, Transparency = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border})
+local Toast = create("TextLabel", {
+	Name = "Toast",
+	AnchorPoint = Vector2.new(0.5, 1),
+	Position = UDim2.new(0.5, 0, 0.875, -6),
+	Size = UDim2.fromOffset(0, 26),
+	AutomaticSize = Enum.AutomaticSize.X,
+	BackgroundColor3 = col.panel,
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	FontFace = fontReg,
+	TextSize = 14,
+	TextColor3 = col.white,
+	TextTransparency = 1,
+	Text = "",
+	ZIndex = 20,
+	Parent = Main,
+}, {
+	corner(13),
+	create("UIPadding", {PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12)}),
+	ToastStroke,
+})
+table.insert(fadeExclude, Toast)
+
+local toastId = 0
+local function toast(str, color)
+	toastId += 1
+	local id = toastId
+	Toast.TextColor3 = color or col.white
+	Toast.Position = UDim2.new(0.5, 0, 0.875, 4)
+	tween(Toast, 0.18, {BackgroundTransparency = 0, TextTransparency = 0, Position = UDim2.new(0.5, 0, 0.875, -6)})
+	tween(ToastStroke, 0.18, {Transparency = 0.8})
+	scramble(Toast, str, 0.15)
+	task.delay(1.5, function()
+		if id ~= toastId then
+			return
+		end
+		tween(Toast, 0.2, {BackgroundTransparency = 1, TextTransparency = 1})
+		tween(ToastStroke, 0.2, {Transparency = 1})
+	end)
+end
+
+local ServerSearchStroke = stroke()
+text(ServerList, {
+	Name = "ServerSearchHeader",
+	Text = "SNIPE A PLAYER",
+	FontFace = fontBold,
+	TextSize = 10,
+	TextColor3 = col.dim,
+	Size = UDim2.new(1, -8, 0, 15),
+	LayoutOrder = -2,
+})
+
+local ServerSearch = create("Frame", {
+	Name = "ServerSearch",
+	Size = UDim2.new(1, -8, 0, 34),
+	BackgroundColor3 = col.panel,
+	BorderSizePixel = 0,
+	LayoutOrder = -1,
+	Parent = ServerList,
+}, {corner(7), ServerSearchStroke})
+
+local ServerSearchIcon = iconIn(ServerSearch, {"search"}, UDim2.fromOffset(14, 14), col.dim)
+ServerSearchIcon.AnchorPoint = Vector2.new(0, 0.5)
+ServerSearchIcon.Position = UDim2.new(0, 10, 0.5, 0)
+
+local ServerSearchBox = create("TextBox", {
+	Name = "SearchBox",
+	AnchorPoint = Vector2.new(0, 0.5),
+	Position = UDim2.new(0, 31, 0.5, 0),
+	Size = UDim2.new(1, -72, 0, 16),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	FontFace = fontReg,
+	PlaceholderText = "Search any player...",
+	PlaceholderColor3 = col.dim,
+	Text = "",
+	TextColor3 = col.white,
+	TextSize = 12,
+	TextScaled = false,
+	TextWrapped = false,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	ClearTextOnFocus = false,
+	Parent = ServerSearch,
+})
+
+local ServerSearchGo = iconButton({
+	Name = "GoButton",
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.new(1, -18, 0.5, 0),
+	Size = UDim2.fromOffset(24, 24),
+	Parent = ServerSearch,
+}, {"arrow-right", "chevron-right"}, UDim2.fromOffset(13, 13))
+buttonFx(ServerSearchGo, flat, flatHover)
+
+local function submitServerSearch()
+	local q = ServerSearchBox.Text:match("^%s*(.-)%s*$")
+	if q == "" then
+		toast("Enter a username", col.red)
+		return
+	end
+	ServerSearchBox.Text = ""
+	snipe(q)
+end
+
+ServerSearchBox.Focused:Connect(function()
+	tween(ServerSearchStroke, 0.2, {Transparency = 0.55})
+	tween(ServerSearch, 0.2, {BackgroundColor3 = col.panelHi})
+end)
+
+ServerSearchBox.FocusLost:Connect(function(enter)
+	tween(ServerSearchStroke, 0.2, {Transparency = 0.86})
+	tween(ServerSearch, 0.2, {BackgroundColor3 = col.panel})
+	if enter then
+		submitServerSearch()
+	end
+end)
+
+ServerSearchGo.MouseButton1Click:Connect(submitServerSearch)
+
+local function settingToggle(parent, order, iconNames, titleText, descText, isOn, onToggle)
+	local row = create("TextButton", {
+		Name = "Setting_" .. titleText:gsub("%s+", ""),
+		Size = UDim2.new(1, -8, 0, 54),
+		BackgroundColor3 = col.panel,
+		BorderSizePixel = 0,
+		AutoButtonColor = false,
+		Text = "",
+		LayoutOrder = order,
+		Parent = parent,
+	}, {corner(), stroke()})
+	row:SetAttribute("IsRow", true)
+	buttonFx(row, flat, flatHover)
+
+	local badge = create("Frame", {
+		Name = "IconBadge",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0, 25, 0.5, 0),
+		Size = UDim2.fromOffset(30, 30),
+		BackgroundColor3 = col.button,
+		BorderSizePixel = 0,
+		Parent = row,
+	}, {corner(7), stroke(0.9)})
+	iconIn(badge, iconNames, UDim2.fromOffset(18, 18), col.icon)
+
+	text(row, {
+		Name = "Title",
+		Text = titleText,
+		FontFace = fontBold,
+		TextSize = 13,
+		TextColor3 = col.white,
+		Position = UDim2.new(0, 50, 0, 7),
+		Size = UDim2.new(1, -108, 0, 17),
+	})
+
+	text(row, {
+		Name = "Desc",
+		Text = descText,
+		TextSize = 10,
+		TextColor3 = col.dim,
+		Position = UDim2.new(0, 50, 0, 27),
+		Size = UDim2.new(1, -108, 0, 14),
+	})
+
+	local track = create("Frame", {
+		Name = "Track",
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -11, 0.5, 0),
+		Size = UDim2.fromOffset(36, 20),
+		BackgroundColor3 = col.button,
+		BorderSizePixel = 0,
+		Parent = row,
+	}, {corner(10), stroke(0.9)})
+
+	local knob = create("Frame", {
+		Name = "Knob",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0, 7, 0.5, 0),
+		Size = UDim2.fromOffset(14, 14),
+		BackgroundColor3 = col.white,
+		BorderSizePixel = 0,
+		Parent = track,
+	}, {corner(7)})
+
+	local function render(on, instant)
+		on = on and true or false
+		track.BackgroundColor3 = on and col.green or col.button
+		local goal = on and UDim2.new(0, 29, 0.5, 0) or UDim2.new(0, 7, 0.5, 0)
+		if instant then
+			knob.Position = goal
+		else
+			tween(knob, 0.16, {Position = goal})
+		end
+	end
+
+	render(isOn(), true)
+	row.MouseButton1Click:Connect(onToggle)
+	return render
+end
+
+local SettingsHeader = text(SettingsScreen, {
+	Name = "SettingsHeader",
+	Text = "SETTINGS",
+	FontFace = fontBold,
+	TextSize = 10,
+	TextColor3 = col.dim,
+	Size = UDim2.new(1, -8, 0, 16),
+	LayoutOrder = 1,
+})
+SettingsHeader:SetAttribute("IsRow", true)
+SettingsHeader:SetAttribute("IsHeader", true)
+
+local renderAutoSetting = settingToggle(SettingsScreen, 2, {"zap", "crosshair"}, "AutoSnipe", "Refreshes the target and auto-joins when they enter a game", function()
+	return autoSnipe
+end, function()
+	setAutoSnipe(not autoSnipe)
+end)
+
+local function refreshAutoUI()
+	renderAutoSetting(autoSnipe)
+end
+
+local renderAfkSetting = settingToggle(SettingsScreen, 3, {"coffee", "clock", "timer"}, "Anti-AFK", "Blocks Roblox's 20-minute idle kick", function()
+	return antiAfk
+end, function()
+	setAntiAfk(not antiAfk)
+end)
+
+local function refreshAntiAfkUI()
+	renderAfkSetting(antiAfk)
+end
+
+create("Frame", {
+	Name = "SettingsDivider",
+	Size = UDim2.new(1, -8, 0, 1),
+	BackgroundColor3 = col.button,
+	BorderSizePixel = 0,
+	LayoutOrder = 9,
+	Parent = SettingsScreen,
+})
+
+text(SettingsScreen, {
+	Name = "Credit",
+	Text = "Created by sixlucas",
+	FontFace = fontBold,
+	TextSize = 10,
+	TextColor3 = col.dim,
+	TextXAlignment = Enum.TextXAlignment.Center,
+	Size = UDim2.new(1, -8, 0, 18),
+	LayoutOrder = 10,
+})
+
+local function __ssRun()
+local inputPos = UDim2.fromScale(0.0122, 0)
+
+local InputStroke = stroke()
+local InputFrame = create("Frame", {
+	Name = "Input",
+	Position = inputPos,
+	Size = UDim2.fromScale(0.5805, 0.1838),
+	BackgroundColor3 = col.panel,
+	BorderSizePixel = 0,
+	Parent = SniperScreen,
+}, {corner(), InputStroke})
+
+local InpBox = create("TextBox", {
+	Name = "InpBox",
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.fromScale(0.9076, 0.4651),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	FontFace = fontReg,
+	PlaceholderText = "Username",
+	PlaceholderColor3 = col.dim,
+	Text = "",
+	TextColor3 = col.white,
+	TextScaled = true,
+	TextWrapped = true,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	ClearTextOnFocus = false,
+	Parent = InputFrame,
+})
+
+InpBox.Focused:Connect(function()
+	tween(InputStroke, 0.2, {Transparency = 0.55})
+	tween(InputFrame, 0.2, {BackgroundColor3 = col.panelHi})
+end)
+
+local SnipeButton = create("TextButton", {
+	Name = "SnipeButton",
+	Position = UDim2.fromScale(0.5976, 0),
+	Size = UDim2.fromScale(0.3878, 0.1838),
+	BackgroundColor3 = col.panel,
+	BorderSizePixel = 0,
+	AutoButtonColor = false,
+	Text = "",
+	Parent = SniperScreen,
+}, {corner(), stroke(), create("UIScale")})
+
+local SnipeIcon = create("ImageLabel", {
+	Name = "Icon",
+	AnchorPoint = Vector2.new(0, 0.5),
+	Position = UDim2.new(0, 12, 0.5, 0),
+	Size = UDim2.fromOffset(16, 16),
+	BackgroundTransparency = 1,
+	ImageColor3 = col.icon,
+	Parent = SnipeButton,
+}, {create("UIAspectRatioConstraint")})
+lucide(SnipeIcon, {"crosshair", "target"})
+
+label({
+	Name = "Label",
+	Text = "Snipe",
+	FontFace = fontBold,
+	AnchorPoint = Vector2.new(0, 0.5),
+	Position = UDim2.new(0, 34, 0.5, 0),
+	Size = UDim2.new(1, -44, 0.4651, 0),
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Parent = SnipeButton,
+})
+buttonFx(SnipeButton, flat, flatHover)
+
+local Card = create("Frame", {
+	Name = "Card",
+	Position = UDim2.fromScale(0.0122, 0.2),
+	Size = UDim2.new(0.9756, 0, 0.8, -2),
+	BackgroundColor3 = col.panel,
+	BorderSizePixel = 0,
+	ClipsDescendants = true,
+	Parent = SniperScreen,
+}, {corner(), stroke()})
+
+local Placeholder = label({
+	Name = "Placeholder",
+	Text = "Type a username and hit Snipe",
+	TextScaled = false,
+	TextSize = 14,
+	TextColor3 = col.dim,
+	Size = UDim2.fromScale(0.8, 0.3),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Parent = Card,
+})
+
+local Body = create("Frame", {
+	Name = "Body",
+	Size = UDim2.fromScale(1, 1),
+	BackgroundTransparency = 1,
+	Visible = false,
+	Parent = Card,
+})
+
+local Avatar = create("ImageLabel", {
+	Name = "Avatar",
+	Position = UDim2.fromOffset(12, 12),
+	Size = UDim2.fromOffset(46, 46),
+	BackgroundColor3 = col.button,
+	BorderSizePixel = 0,
+	ScaleType = Enum.ScaleType.Crop,
+	Parent = Body,
+}, {corner(23), stroke()})
+
+local PlatformBadge = create("ImageLabel", {
+	Name = "Platform",
+	AnchorPoint = Vector2.new(0, 0.5),
+	Position = UDim2.fromOffset(68, 21),
+	Size = UDim2.fromOffset(14, 14),
+	BackgroundTransparency = 1,
+	Visible = false,
+	Parent = Body,
+})
+
+local NameLbl = text(Body, {
+	Name = "Name",
+	Position = UDim2.fromOffset(88, 11),
+	Size = UDim2.new(1, -100, 0, 20),
+	TextSize = 17,
+	FontFace = fontBold,
+})
+
+local SubLbl = text(Body, {
+	Name = "Sub",
+	Position = UDim2.fromOffset(68, 31),
+	Size = UDim2.new(1, -80, 0, 14),
+	TextSize = 12,
+	TextColor3 = col.dim,
+})
+
+local PillRow = create("Frame", {
+	Name = "Pills",
+	Position = UDim2.fromOffset(68, 48),
+	Size = UDim2.new(1, -80, 0, 18),
+	BackgroundTransparency = 1,
+	ClipsDescendants = true,
+	Parent = Body,
+}, {
+	create("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		VerticalAlignment = Enum.VerticalAlignment.Center,
+		Padding = UDim.new(0, 5),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}),
+})
+
+local function clearPills()
+	for _, c in ipairs(PillRow:GetChildren()) do
+		if c:IsA("Frame") then
+			c:Destroy()
+		end
+	end
+end
+
+local function addPill(str, color, dot)
+	local p = create("Frame", {
+		AutomaticSize = Enum.AutomaticSize.X,
+		Size = UDim2.fromOffset(0, 18),
+		BackgroundColor3 = color,
+		BackgroundTransparency = 0.85,
+		BorderSizePixel = 0,
+		Parent = PillRow,
+	}, {
+		corner(9),
+		create("UIPadding", {PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 9)}),
+		create("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			VerticalAlignment = Enum.VerticalAlignment.Center,
+			Padding = UDim.new(0, 5),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}),
+	})
+	if dot then
+		create("Frame", {
+			Size = UDim2.fromOffset(6, 6),
+			BackgroundColor3 = color,
+			BorderSizePixel = 0,
+			LayoutOrder = 1,
+			Parent = p,
+		}, {corner(3)})
+	end
+	create("TextLabel", {
+		AutomaticSize = Enum.AutomaticSize.X,
+		Size = UDim2.fromOffset(0, 18),
+		BackgroundTransparency = 1,
+		Text = str,
+		TextColor3 = color,
+		FontFace = fontBold,
+		TextSize = 11,
+		LayoutOrder = 2,
+		Parent = p,
+	})
+end
+
+local GameBox = create("Frame", {
+	Name = "GameBox",
+	Position = UDim2.fromOffset(12, 70),
+	Size = UDim2.new(1, -24, 0, 52),
+	BackgroundColor3 = col.panelHi,
+	BorderSizePixel = 0,
+	Parent = Body,
+}, {corner(), stroke()})
+
+local GameImage = create("ImageLabel", {
+	Name = "GameImage",
+	Position = UDim2.fromOffset(6, 6),
+	Size = UDim2.fromOffset(40, 40),
+	BackgroundColor3 = col.button,
+	BorderSizePixel = 0,
+	ScaleType = Enum.ScaleType.Crop,
+	Parent = GameBox,
+}, {corner(6), stroke()})
+
+local GameCaption = text(GameBox, {
+	Position = UDim2.fromOffset(54, 8),
+	Size = UDim2.new(1, -64, 0, 10),
+	Text = "GAME",
+	TextSize = 9,
+	TextColor3 = col.dim,
+})
+
+local GameLbl = text(GameBox, {
+	Position = UDim2.fromOffset(54, 21),
+	Size = UDim2.new(1, -64, 0, 22),
+	Text = "-",
+	TextSize = 13,
+	FontFace = fontBold,
+})
+
+local Actions = create("Frame", {
+	Name = "Actions",
+	Position = UDim2.fromOffset(12, 130),
+	Size = UDim2.new(1, -24, 0, 26),
+	BackgroundTransparency = 1,
+	Visible = false,
+	Parent = Body,
+})
+
+local function actionButton(names, str, color)
+	local b = create("TextButton", {
+		BackgroundColor3 = col.button,
+		BorderSizePixel = 0,
+		AutoButtonColor = false,
+		Text = "",
+		Parent = Actions,
+	}, {corner(), stroke(), create("UIScale")})
+	local ic = create("ImageLabel", {
+		Name = "Icon",
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, 10, 0.5, 0),
+		Size = UDim2.fromOffset(14, 14),
+		BackgroundTransparency = 1,
+		ImageColor3 = color,
+		Parent = b,
+	})
+	lucide(ic, names)
+	local l = text(b, {
+		Position = UDim2.fromOffset(30, 0),
+		Size = UDim2.new(1, -36, 1, 0),
+		Text = str,
+		TextSize = 13,
+		TextColor3 = color,
+		FontFace = fontBold,
+	})
+	l.TextYAlignment = Enum.TextYAlignment.Center
+	buttonFx(b, {bg = col.button}, {bg = col.buttonHi})
+	return b, l
+end
+
+local JoinBtn = actionButton("play", "Join", col.green)
+local CopyBtn, CopyLbl = actionButton("copy", "Copy link", col.white)
+
+local function layoutActions(canJoin)
+	JoinBtn.Visible = canJoin
+	JoinBtn.Position = UDim2.new()
+	JoinBtn.Size = UDim2.new(0.5, -3, 1, 0)
+	if canJoin then
+		CopyBtn.Position = UDim2.new(0.5, 3, 0, 0)
+		CopyBtn.Size = UDim2.new(0.5, -3, 1, 0)
+	else
+		CopyBtn.Position = UDim2.new()
+		CopyBtn.Size = UDim2.new(1, 0, 1, 0)
+	end
+end
+layoutActions(false)
+
+local function shake(obj, base)
+	task.spawn(function()
+		for _, o in ipairs({7, -6, 4, -3, 2, 0}) do
+			tween(obj, 0.04, {Position = base + UDim2.fromOffset(o, 0)}, Enum.EasingStyle.Sine)
+			task.wait(0.04)
+		end
+		obj.Position = base
+	end)
+end
+
+local loadAvatar, loadGameIcon
+
+local function headshot(id)
+	return ("rbxthumb://type=AvatarHeadShot&id=%d&w=150&h=150"):format(id)
+end
+
+local platformStyles = {
+	pc = {names = {"monitor", "computer"}, color = col.blue},
+	mobile = {names = {"smartphone", "phone", "tablet"}, color = col.green},
+	console = {names = {"gamepad-2", "gamepad"}, color = col.orange},
+	unknown = {names = {"monitor-smartphone", "circle-help", "help-circle"}, color = col.dim},
+}
+
+local function normalizePlatform(raw)
+	if typeof(raw) == "EnumItem" then
+		raw = raw.Name
+	end
+	if type(raw) ~= "string" then
+		return nil
+	end
+	local s = raw:lower():gsub("[%s_%-]", "")
+	if s == "" or s == "none" or s == "unknown" then
+		return nil
+	end
+	if s:find("androidtv", 1, true)
+		or s:find("xbox", 1, true)
+		or s:find("playstation", 1, true)
+		or s:find("ps3", 1, true)
+		or s:find("ps4", 1, true)
+		or s:find("ps5", 1, true)
+		or s:find("wiiu", 1, true)
+		or s == "nx"
+		or s:find("ouya", 1, true)
+		or s:find("chromecast", 1, true)
+		or s:find("console", 1, true)
+		or s:find("gamepad", 1, true)
+		or s:find("metaos", 1, true)
+		or s:find("quest", 1, true)
+		or s == "vr"
+	then
+		return "console"
+	end
+	if s:find("ios", 1, true)
+		or s:find("iphone", 1, true)
+		or s:find("ipad", 1, true)
+		or s:find("android", 1, true)
+		or s:find("mobile", 1, true)
+		or s:find("phone", 1, true)
+		or s:find("tablet", 1, true)
+	then
+		return "mobile"
+	end
+	if s:find("windows", 1, true)
+		or s:find("win", 1, true)
+		or s:find("osx", 1, true)
+		or s:find("mac", 1, true)
+		or s:find("linux", 1, true)
+		or s:find("steamos", 1, true)
+		or s:find("desktop", 1, true)
+		or s:find("pc", 1, true)
+		or s:find("computer", 1, true)
+		or s:find("uwp", 1, true)
+		or s:find("web", 1, true)
+	then
+		return "pc"
+	end
+	return nil
+end
+
+local function localPlatform()
+	local ok, platform = pcall(function()
+		return UserInputService:GetPlatform()
+	end)
+	if ok then
+		local mapped = normalizePlatform(platform)
+		if mapped then
+			return mapped
+		end
+	end
+	local okFoot, tenFoot = pcall(function()
+		return GuiService:IsTenFootInterface()
+	end)
+	if okFoot and tenFoot then
+		return "console"
+	end
+	if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled and not UserInputService.MouseEnabled then
+		return "mobile"
+	end
+	if UserInputService.GamepadEnabled and not UserInputService.KeyboardEnabled then
+		return "console"
+	end
+	return "pc"
+end
+
+local function platformFromPresence(p)
+	if p == nil then
+		return nil
+	end
+	local raw
+	if typeof(p) ~= "Instance" then
+		raw = p.deviceType or p.device or p.platform or p.lastDevice or p.deviceTypeId
+	end
+	if raw == nil then
+		local ok, value = pcall(function()
+			return p.PlatformName
+		end)
+		if ok then
+			raw = value
+		end
+	end
+	if raw == nil then
+		local ok, value = pcall(function()
+			return p.OsPlatform
+		end)
+		if ok then
+			raw = value
+		end
+	end
+	local mapped = normalizePlatform(raw)
+	if mapped then
+		return mapped
+	end
+	if p == LocalPlayer then
+		return localPlatform()
+	end
+	return nil
+end
+
+local function applyPlatformBadge(img, platform)
+	if not img then
+		return
+	end
+	if not platform then
+		img.Visible = false
+		return
+	end
+	local style = platformStyles[platform] or platformStyles.unknown
+	img.Visible = true
+	img.ImageColor3 = style.color
+	lucide(img, style.names)
+end
+
+local function makeRow(list, data, actionIcon, onAction)
+	local row = create("Frame", {
+		Name = "Row",
+		Size = UDim2.new(1, -8, 0, 66),
+		BackgroundColor3 = col.panel,
+		BorderSizePixel = 0,
+		LayoutOrder = data.order or 0,
+	}, {corner(), stroke()})
+	row:SetAttribute("IsRow", true)
+
+	create("ImageLabel", {
+		Name = "Avatar",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0, 35, 0.5, 0),
+		Size = UDim2.fromOffset(49, 49),
+		BackgroundColor3 = col.button,
+		BorderSizePixel = 0,
+		Image = data.avatar or "",
+		ScaleType = Enum.ScaleType.Crop,
+		Parent = row,
+	}, {corner(25), stroke()})
+
+	local titleX = 71
+	if data.platform then
+		local platform = create("ImageLabel", {
+			Name = "Platform",
+			AnchorPoint = Vector2.new(0, 0.5),
+			Position = UDim2.new(0, 71, 0, 24),
+			Size = UDim2.fromOffset(14, 14),
+			BackgroundTransparency = 1,
+			Parent = row,
+		})
+		applyPlatformBadge(platform, data.platform)
+		titleX = 91
+	end
+
+	label({
+		Name = "Title",
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, titleX, 0, 24),
+		Size = UDim2.new(1, -(titleX + 49), 0, 17),
+		Text = data.title or "",
+		FontFace = fontBold,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Parent = row,
+	})
+
+	label({
+		Name = "Sub",
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, 71, 0, 41),
+		Size = UDim2.new(1, -120, 0, 17),
+		Text = data.sub or "",
+		TextColor3 = col.icon,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Parent = row,
+	})
+
+	local action = iconButton({
+		Name = "Action",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(1, -30, 0.5, 0),
+		Size = UDim2.fromOffset(32, 32),
+		Parent = row,
+	}, actionIcon, UDim2.fromScale(0.5, 0.5))
+	buttonFx(action)
+	action.MouseButton1Click:Connect(onAction)
+
+	if data.onClick then
+		row.InputBegan:Connect(function(input)
+			if isClick(input) then
+				data.onClick()
+			end
+		end)
+	end
+
+	row.MouseEnter:Connect(function()
+		tween(row, 0.08, {BackgroundColor3 = col.panelHi})
+	end)
+	row.MouseLeave:Connect(function()
+		tween(row, 0.12, {BackgroundColor3 = col.panel})
+	end)
+
+	row.Parent = list
+
+	if list.Visible and Main.Visible and not data.noFade then
+		fade(row, 0, 0)
+		fade(row, 1, 0.16)
+	end
+
+	return row
+end
+
+local function clearList(list)
+	for _, child in ipairs(list:GetChildren()) do
+		if child:GetAttribute("IsRow") then
+			child:Destroy()
+		end
+	end
+end
+
+local serverRefreshId = 0
+
+local function addSection(textValue, order)
+	local l = text(ServerList, {
+		Name = "Section",
+		Size = UDim2.new(1, -8, 0, 14),
+		Text = textValue,
+		TextSize = 10,
+		TextColor3 = col.dim,
+		FontFace = fontBold,
+		LayoutOrder = order,
+	})
+	l:SetAttribute("IsRow", true)
+	l:SetAttribute("IsHeader", true)
+	return l
+end
+
+function refreshServer()
+	if destroyed or not positiveId then
+		return
+	end
+	serverRefreshId += 1
+	local gen = serverRefreshId
+	clearList(ServerList)
+
+	local others = {}
+	local currentIds = {}
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= LocalPlayer then
+			currentIds[p.UserId] = true
+			table.insert(others, p)
+		end
+	end
+	table.sort(others, function(a, b)
+		return a.Name:lower() < b.Name:lower()
+	end)
+
+	local order = 0
+	local function nextOrder()
+		order += 1
+		return order
+	end
+
+	if #others > 0 then
+		addSection("IN YOUR SERVER", nextOrder())
+	end
+
+	for _, p in ipairs(others) do
+		local row = makeRow(ServerList, {
+			title = p.DisplayName,
+			sub = "@" .. p.Name .. "  •  In game",
+			avatar = headshot(p.UserId),
+			platform = platformFromPresence(p) or "unknown",
+			order = nextOrder(),
+			noFade = true,
+			onClick = function()
+				snipe(p.Name)
+			end,
+		}, "crosshair", function()
+			snipe(p.Name)
+		end)
+		if loadAvatar then
+			loadAvatar(row:FindFirstChild("Avatar"), p.UserId)
+		end
+		task.spawn(function()
+			local ok, friend = pcall(LocalPlayer.IsFriendsWith, LocalPlayer, p.UserId)
+			if ok and friend and row.Parent then
+				row.Sub.Text = "@" .. p.Name .. "  •  In game  •  Friend"
+				row.Sub.TextColor3 = col.green
+			end
+		end)
+	end
+
+	task.spawn(function()
+		if not getFriends or not getPresenceBatch then
+			return
+		end
+		local friends = getFriends()
+		if destroyed or gen ~= serverRefreshId then
+			return
+		end
+
+		local ids = {}
+		for _, f in ipairs(friends) do
+			if not currentIds[f.id] then
+				table.insert(ids, f.id)
+			end
+		end
+		if #ids == 0 then
+			return
+		end
+
+		local presences = getPresenceBatch(ids)
+		if destroyed or gen ~= serverRefreshId then
+			return
+		end
+
+		local entries = {}
+		for _, f in ipairs(friends) do
+			if not currentIds[f.id] then
+				local p = presences[f.id]
+				local kind = p and p.userPresenceType
+				if kind == 1 or kind == 2 then
+					local place = p and (positiveId(p.placeId) or positiveId(p.rootPlaceId))
+					local job = p and p.gameId
+					local joinable = kind == 2 and place ~= nil and type(job) == "string" and job ~= ""
+					table.insert(entries, {
+						friend = f,
+						presence = p,
+						kind = kind,
+						place = place,
+						job = job,
+						joinable = joinable,
+					})
+				end
+			end
+		end
+
+		table.sort(entries, function(a, b)
+			local function rank(e)
+				if e.kind == 2 then
+					return e.joinable and 1 or 2
+				end
+				return 3
+			end
+			local ra, rb = rank(a), rank(b)
+			if ra ~= rb then
+				return ra < rb
+			end
+			local an = (a.friend.displayName or a.friend.name or ""):lower()
+			local bn = (b.friend.displayName or b.friend.name or ""):lower()
+			return an < bn
+		end)
+
+		if #entries == 0 then
+			return
+		end
+
+		addSection("FRIENDS ONLINE", nextOrder())
+
+		for _, e in ipairs(entries) do
+			local f = e.friend
+			local inGame = e.kind == 2
+			local status
+			if inGame then
+				status = e.joinable and "In game  •  Joins on" or "In game  •  Joins off"
+			else
+				status = "Online  •  Not in game"
+			end
+
+			local function joinFriend()
+				if not e.joinable then
+					snipe(f.name)
+					return
+				end
+				current = {place = e.place, job = e.job, inServer = false}
+				joinCurrent()
+			end
+
+			local platform = platformFromPresence(Players:GetPlayerByUserId(f.id)) or platformFromPresence(e.presence) or "unknown"
+
+			local row = makeRow(ServerList, {
+				title = f.displayName or f.name,
+				sub = "@" .. f.name .. "  •  " .. status,
+				avatar = headshot(f.id),
+				platform = platform,
+				order = nextOrder(),
+				noFade = true,
+				onClick = joinFriend,
+			}, e.joinable and "play" or "crosshair", joinFriend)
+			row.Sub.TextColor3 = e.joinable and col.green or (inGame and col.red or col.blue)
+			if loadAvatar then
+				loadAvatar(row:FindFirstChild("Avatar"), f.id)
+			end
+		end
+	end)
+end
+
+local tabs = {
+	{name = "Sniper", button = SniperButton, screen = SniperScreen},
+	{name = "Server", button = ServerButton, screen = ServerList},
+	{name = "Settings", button = SettingsButton, screen = SettingsScreen},
+}
+
+for i = #tabs, 1, -1 do
+	if tabs[i].name == "Home" then
+		if tabs[i].button then
+			tabs[i].button:Destroy()
+		end
+		if tabs[i].screen then
+			tabs[i].screen:Destroy()
+		end
+		table.remove(tabs, i)
+	end
+end
+
+for _, container in ipairs({ButtonContainer, SectionsContainer}) do
+	for _, child in ipairs(container:GetChildren()) do
+		if child.Name == "Home" or child.Name == "HomeButton" or child.Name == "HomeScreen" then
+			child:Destroy()
+		end
+	end
+end
+
+local currentTab
+
+local function moveIndicator(instant)
+	if not currentTab then
+		return
+	end
+	local btn = tabs[currentTab].button
+	local s = MainScale.Scale > 0 and MainScale.Scale or 1
+	local x = (btn.AbsolutePosition.X + btn.AbsoluteSize.X / 2 - BottomBar.AbsolutePosition.X) / s
+	local pos = UDim2.new(0, x, 1, -2)
+	if instant then
+		Indicator.Position = pos
+	else
+		tween(Indicator, 0.18, {Position = pos})
+	end
+end
+
+local function setTab(index, instant)
+	if index == currentTab then
+		return
+	end
+	local prev = currentTab
+	local dir = (prev and index < prev) and -1 or 1
+	currentTab = index
+
+	for i, tab in ipairs(tabs) do
+		paint(tab.button, i == index and navActive or idle, instant and 0 or 0.2)
+	end
+	moveIndicator(instant)
+
+	if prev then
+		local old = tabs[prev].screen
+		if instant then
+			old.Visible = false
+		else
+			fade(old, 0, 0.1)
+			tween(old, 0.14, {Position = UDim2.fromScale(-0.06 * dir, 0)})
+			task.delay(0.14, function()
+				if tabs[currentTab].screen ~= old then
+					old.Visible = false
+				end
+			end)
+		end
+	end
+
+	local screen = tabs[index].screen
+	screen.Visible = true
+	if instant then
+		screen.Position = UDim2.new()
+		fade(screen, 1, 0)
+	else
+		screen.Position = UDim2.fromScale(0.06 * dir, 0)
+		fade(screen, 0, 0)
+		tween(screen, 0.18, {Position = UDim2.new()})
+		fade(screen, 1, 0.15)
+	end
+
+	if tabs[index].name == "Server" then
+		refreshServer()
+	end
+end
+
+setTabByName = function(name)
+	for i, tab in ipairs(tabs) do
+		if tab.name == name then
+			setTab(i)
+			return
+		end
+	end
+end
+
+for i, tab in ipairs(tabs) do
+	buttonFx(tab.button, idle, hover, function()
+		return currentTab == i
+	end)
+	tab.button.MouseButton1Click:Connect(function()
+		if currentTab == i and tab.name == "Server" then
+			refreshServer()
+		else
+			setTab(i)
+		end
+	end)
+end
+
+BottomBar:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+	moveIndicator(true)
+end)
+BottomBar:GetPropertyChangedSignal("AbsolutePosition"):Connect(function()
+	moveIndicator(true)
+end)
+
+bind(Players.PlayerAdded, function()
+	if currentTab and tabs[currentTab].name == "Server" then
+		task.delay(0.2, refreshServer)
+	end
+end)
+bind(Players.PlayerRemoving, function()
+	if currentTab and tabs[currentTab].name == "Server" then
+		task.delay(0.2, refreshServer)
+	end
+end)
+
+task.spawn(function()
+	while not destroyed do
+		task.wait(20)
+		if not destroyed and Main.Visible and currentTab and tabs[currentTab] and tabs[currentTab].name == "Server" then
+			refreshServer()
+		end
+	end
+end)
+
+do
+	local dragging, dragStart, startPos
+	TopBar.InputBegan:Connect(function(input)
+		if not isClick(input) then
+			return
+		end
+		dragging, dragStart, startPos = true, input.Position, Main.Position
+		local c
+		c = input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				dragging = false
+				c:Disconnect()
+			end
+		end)
+	end)
+
+	bind(UserInputService.InputChanged, function(input)
+		if not dragging then
+			return
+		end
+		local t = input.UserInputType
+		if t == Enum.UserInputType.MouseMovement or t == Enum.UserInputType.Touch then
+			local d = input.Position - dragStart
+			Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+		end
+	end)
+end
+
+local UI = {}
+
+local function open()
+	if isOpen or destroyed then
+		return
+	end
+	isOpen = true
+	Main.Visible = true
+
+	MainScale.Scale = 0.88
+	fade(Main, 0, 0)
+	tween(MainScale, 0.3, {Scale = 1}, Enum.EasingStyle.Back)
+	fade(Main, 1, 0.2)
+	scramble(Title, title, 0.35)
+	task.defer(moveIndicator, true)
+	if currentTab and tabs[currentTab] and tabs[currentTab].name == "Server" then
+		task.defer(refreshServer)
+	end
+end
+
+local function hide(callback)
+	if not isOpen then
+		if callback then
+			callback()
+		end
+		return
+	end
+	isOpen = false
+	tween(MainScale, 0.18, {Scale = 0.9}, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	fade(Main, 0, 0.14)
+	task.delay(0.24, function()
+		if not isOpen then
+			Main.Visible = false
+		end
+		if callback then
+			callback()
+		end
+	end)
+end
+
+function UI.Toggle()
+	if destroyed then
+		return
+	end
+	if isOpen then
+		hide()
+	else
+		open()
+	end
+end
+
+function UI.Destroy(instant)
+	if destroyed then
+		return
+	end
+	destroyed = true
+	local function finish()
+		for _, c in ipairs(connections) do
+			c:Disconnect()
+		end
+		ScreenGui:Destroy()
+		if env.__PlayerSniper == UI then
+			env.__PlayerSniper = nil
+		end
+	end
+	if instant then
+		finish()
+	else
+		hide(finish)
+	end
+end
+
+CloseButton.MouseButton1Click:Connect(function()
+	UI.Destroy()
+end)
+
+bind(UserInputService.InputBegan, function(input, gpe)
+	if not gpe and input.KeyCode == toggleKey then
+		UI.Toggle()
+	end
+end)
+
+local httpFn = (typeof(request) == "function" and request)
+	or (typeof(http_request) == "function" and http_request)
+	or (syn and syn.request)
+	or (http and http.request)
+	or (fluxus and fluxus.request)
+
+local function call(method, url, body)
+	local opts = {
+		Url = url,
+		Method = method,
+		Headers = {["Content-Type"] = "application/json"},
+		Body = body and HttpService:JSONEncode(body) or nil,
+	}
+	local ok, res
+	if httpFn then
+		ok, res = pcall(httpFn, opts)
+	else
+		local okReq, success, response = pcall(HttpService.RequestAsync, HttpService, opts)
+		ok = okReq and success
+		res = response
+	end
+	local raw = ok and type(res) == "table" and ((type(res.Body) == "string" and res.Body ~= "" and res.Body) or res.body)
+	if not raw and method == "GET" then
+		local okGet, got = pcall(function()
+			return game:HttpGet(url)
+		end)
+		raw = okGet and got
+	end
+	if type(raw) ~= "string" or raw == "" then
+		return nil
+	end
+	local good, data = pcall(HttpService.JSONDecode, HttpService, raw)
+	return good and data or nil
+end
+
+function positiveId(id)
+	local n = tonumber(id)
+	return n and n > 0 and n or nil
+end
+
+local userCache = {}
+
+local function rememberUser(query, id, name, display)
+	local rec = {id = id, name = name, display = display or name, displayName = display or name}
+	if type(query) == "string" and query ~= "" then
+		userCache[query:lower()] = rec
+	end
+	if type(name) == "string" and name ~= "" then
+		userCache[name:lower()] = rec
+	end
+	if type(display) == "string" and display ~= "" then
+		userCache[display:lower()] = rec
+	end
+	return rec
+end
+
+local universeCache = {}
+
+local function resolveUniverse(place)
+	place = positiveId(place)
+	if not place then
+		return nil
+	end
+	local cached = universeCache[place]
+	if cached then
+		return cached
+	end
+	local d = call("GET", "https://apis.roblox.com/universes/v1/places/" .. place .. "/universe")
+	local universe = d and positiveId(d.universeId) or nil
+	if universe then
+		universeCache[place] = universe
+	end
+	return universe
+end
+local thumbCache = {}
+local avatarUrlCache = {}
+local avatarUrlPending = {}
+local canUseAssets = typeof(getcustomasset) == "function" and typeof(writefile) == "function"
+
+local function applyImage(img, key, url)
+	if not url or url == "" then
+		return
+	end
+	if thumbCache[key] then
+		if img:GetAttribute("Key") == key then
+			img.Image = thumbCache[key]
+		end
+		return
+	end
+	task.spawn(function()
+		if not canUseAssets then
+			return
+		end
+		local ok, bytes = pcall(function()
+			return game:HttpGet(url)
+		end)
+		if not ok or type(bytes) ~= "string" or #bytes == 0 then
+			return
+		end
+		local safeKey = (key:gsub("%W", "_"))
+		local file = "SSP_" .. safeKey .. ".png"
+		pcall(writefile, file, bytes)
+		local okA, asset = pcall(getcustomasset, file)
+		if okA and asset then
+			thumbCache[key] = asset
+			if img.Parent and img:GetAttribute("Key") == key then
+				img.Image = asset
+			end
+		end
+	end)
+end
+
+loadAvatar = function(img, userId)
+	if not img then
+		return
+	end
+	local id = positiveId(userId)
+	if not id then
+		img.Image = ""
+		return
+	end
+	local key = "av" .. id
+	img:SetAttribute("Key", key)
+	if thumbCache[key] then
+		img.Image = thumbCache[key]
+		return
+	end
+	img.Image = headshot(id)
+	if not canUseAssets then
+		return
+	end
+	local cached = avatarUrlCache[id]
+	if cached then
+		applyImage(img, key, cached)
+		return
+	end
+	if avatarUrlPending[id] then
+		return
+	end
+	avatarUrlPending[id] = true
+	task.spawn(function()
+		local d = call("GET", ("https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=%d&size=150x150&format=Png&isCircular=false"):format(id))
+		avatarUrlPending[id] = nil
+		local url = d and d.data and d.data[1] and d.data[1].imageUrl
+		if url then
+			avatarUrlCache[id] = url
+			applyImage(img, key, url)
+		end
+	end)
+end
+
+loadGameIcon = function(img, universeId, placeId)
+	if not img then
+		return
+	end
+	local id = positiveId(universeId) or resolveUniverse(placeId)
+	if not id then
+		img.Image = ""
+		return
+	end
+	local key = "g" .. id
+	img:SetAttribute("Key", key)
+	if thumbCache[key] then
+		img.Image = thumbCache[key]
+		return
+	end
+	img.Image = ("rbxthumb://type=GameIcon&id=%d&w=150&h=150"):format(id)
+	if not canUseAssets then
+		return
+	end
+	task.spawn(function()
+		local d = call("GET", ("https://thumbnails.roblox.com/v1/games/icons?universeIds=%d&returnPolicy=PlaceHolder&size=150x150&format=Png&isCircular=false"):format(id))
+		local url = d and d.data and d.data[1] and d.data[1].imageUrl
+		applyImage(img, key, url)
+	end)
+end
+
+local function findUser(query)
+	local q = query:lower()
+	local hit = userCache[q]
+	if hit then
+		return hit.id, hit.name, hit.display
+	end
+
+	local list = Players:GetPlayers()
+
+	for _, p in ipairs(list) do
+		if p.Name:lower() == q or p.DisplayName:lower() == q then
+			local rec = rememberUser(q, p.UserId, p.Name, p.DisplayName)
+			return rec.id, rec.name, rec.display
+		end
+	end
+
+	local exact = call("POST", "https://users.roblox.com/v1/usernames/users", {
+		usernames = {query},
+		excludeBannedUsers = false,
+	})
+	local u = exact and exact.data and exact.data[1]
+	if u then
+		local rec = rememberUser(q, u.id, u.name, u.displayName)
+		return rec.id, rec.name, rec.display
+	end
+
+	for _, p in ipairs(list) do
+		if p.Name:lower():find(q, 1, true) or p.DisplayName:lower():find(q, 1, true) then
+			local rec = rememberUser(q, p.UserId, p.Name, p.DisplayName)
+			return rec.id, rec.name, rec.display
+		end
+	end
+
+	local found = call("GET", "https://users.roblox.com/v1/users/search?limit=10&keyword=" .. HttpService:UrlEncode(query))
+	local results = found and found.data
+	if results and #results > 0 then
+		local pick = results[1]
+		for _, r in ipairs(results) do
+			if r.name:lower():sub(1, #q) == q then
+				pick = r
+				break
+			end
+		end
+		local rec = rememberUser(q, pick.id, pick.name, pick.displayName)
+		return rec.id, rec.name, rec.display
+	end
+end
+
+local presenceCache = {}
+local PRESENCE_TTL = 5
+
+local function getPresence(id, force)
+	id = positiveId(id)
+	if not id then
+		return nil
+	end
+	local now = os.time()
+	local cached = presenceCache[id]
+	if not force and cached and now - cached.at < PRESENCE_TTL then
+		return cached.data
+	end
+	local d = call("POST", "https://presence.roblox.com/v1/presence/users", {userIds = {id}})
+	local p = d and d.userPresences and d.userPresences[1]
+	presenceCache[id] = {at = now, data = p}
+	return p
+end
+
+function getPresenceBatch(ids)
+	local out = {}
+	local now = os.time()
+	for i = 1, #ids, 100 do
+		local chunk = {}
+		for j = i, math.min(i + 99, #ids) do
+			chunk[#chunk + 1] = ids[j]
+		end
+		local d = call("POST", "https://presence.roblox.com/v1/presence/users", {userIds = chunk})
+		if d and d.userPresences then
+			for _, p in ipairs(d.userPresences) do
+				local id = positiveId(p.userId)
+				if id then
+					out[id] = p
+					presenceCache[id] = {at = now, data = p}
+				end
+			end
+		end
+	end
+	return out
+end
+
+local friendsCache, friendsCacheAt, friendsCacheOk
+
+function getFriends(force)
+	local now = os.time()
+	local ttl = friendsCacheOk and 30 or 10
+	if not force and friendsCache and now - friendsCacheAt < ttl then
+		return friendsCache
+	end
+
+	local out = {}
+	local seen = {}
+	local function addFriend(id, name, display)
+		if id and not seen[id] then
+			seen[id] = true
+			local rec = rememberUser(name, id, name, display or name)
+			table.insert(out, rec)
+		end
+	end
+
+	local ok = pcall(function()
+		local pages = LocalPlayer:GetFriendsAsync()
+		while true do
+			for _, item in ipairs(pages:GetCurrentPage()) do
+				local id = positiveId(item.Id)
+				if id then
+					local name = item.Username or item.Name or ("User" .. id)
+					addFriend(id, name, item.DisplayName or name)
+				end
+			end
+			if pages.IsFinished then
+				break
+			end
+			pages:AdvanceToNextPageAsync()
+		end
+	end)
+
+	if not ok or #out == 0 then
+		local cursor
+		for _ = 1, 10 do
+			local url = ("https://friends.roblox.com/v1/users/%d/friends"):format(LocalPlayer.UserId)
+			if cursor and cursor ~= "" then
+				url = url .. "?cursor=" .. HttpService:UrlEncode(cursor)
+			end
+			local d = call("GET", url)
+			local list = d and d.data
+			if type(list) ~= "table" then
+				break
+			end
+			for _, f in ipairs(list) do
+				local id = positiveId(f.id)
+				if id then
+					local name = f.name or f.displayName or ("User" .. id)
+					addFriend(id, name, f.displayName or name)
+				end
+			end
+			cursor = d.nextPageCursor
+			if not cursor or cursor == "" then
+				break
+			end
+		end
+	end
+
+	friendsCache = out
+	friendsCacheAt = now
+	friendsCacheOk = ok and #out > 0
+	return out
+end
+
+local nonGameNames = {
+	website = true,
+	mobile = true,
+	roblox = true,
+	studio = true,
+	unknown = true,
+	offline = true,
+	online = true,
+	["in game"] = true,
+	playing = true,
+	["not in a game"] = true,
+}
+
+local function isRealName(n)
+	if type(n) ~= "string" or n == "" then
+		return false
+	end
+	if n:find("%[") or n:upper():find("UNAVAILABLE") then
+		return false
+	end
+	if nonGameNames[n:lower()] then
+		return false
+	end
+	return true
+end
+
+local gameNameCache = {}
+
+local function getGameName(p, place, universe)
+	place = positiveId(place)
+	universe = positiveId(universe) or resolveUniverse(place)
+	local key = universe and ("u" .. universe) or (place and ("p" .. place))
+	local cached = key and gameNameCache[key]
+	if cached then
+		return cached, universe
+	end
+	if universe then
+		local d = call("GET", "https://games.roblox.com/v1/games?universeIds=" .. universe)
+		local g = d and d.data and d.data[1]
+		if g and isRealName(g.name) then
+			if key then
+				gameNameCache[key] = g.name
+			end
+			return g.name, universe
+		end
+	end
+	if isRealName(p.lastLocation) then
+		if key then
+			gameNameCache[key] = p.lastLocation
+		end
+		return p.lastLocation, universe
+	end
+	if place then
+		local ok, info = pcall(MarketplaceService.GetProductInfo, MarketplaceService, place)
+		if ok and info and isRealName(info.Name) then
+			if key then
+				gameNameCache[key] = info.Name
+			end
+			return info.Name, universe
+		end
+	end
+	return nil, universe
+end
+
+local function isBlocked(id)
+	local ok, list = pcall(function()
+		return StarterGui:GetCore("GetBlockedUserIds")
+	end)
+	if ok and type(list) == "table" then
+		for _, v in ipairs(list) do
+			if v == id then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+local function ago(iso)
+	local ok, dt = pcall(DateTime.fromIsoDate, iso)
+	if not ok or not dt then
+		return nil
+	end
+	local diff = os.time() - dt.UnixTimestamp
+	if diff < 60 then
+		return "just now"
+	elseif diff < 3600 then
+		return math.floor(diff / 60) .. "m ago"
+	elseif diff < 86400 then
+		return math.floor(diff / 3600) .. "h ago"
+	end
+	return math.floor(diff / 86400) .. "d ago"
+end
+
+local busy = false
+local searchId = 0
+local autoToken = 0
+local autoTarget = nil
+local joining = false
+
+local function search(query)
+	if busy or destroyed then
+		return
+	end
+	local q = tostring(query or InpBox.Text):match("^%s*(.-)%s*$")
+	if q == "" then
+		shake(InputFrame, inputPos)
+		toast("Enter a username", col.red)
+		return
+	end
+
+	searchId += 1
+	local sid = searchId
+	autoToken += 1
+	busy = true
+	current = nil
+	autoTarget = nil
+	Placeholder.Visible = false
+	Body.Visible = true
+	Actions.Visible = false
+	Avatar:SetAttribute("Key", "")
+	GameImage:SetAttribute("Key", "")
+	Avatar.Image = ""
+	GameImage.Image = ""
+	applyPlatformBadge(PlatformBadge, nil)
+	NameLbl.Text = q
+	SubLbl.Text = ""
+	GameCaption.Text = "GAME"
+	GameLbl.Text = "-"
+	clearPills()
+	addPill("Searching...", col.dim, true)
+
+	task.spawn(function()
+		local id, name, display = findUser(q)
+		if destroyed or sid ~= searchId then
+			return
+		end
+
+		id = positiveId(id)
+		if not id then
+			clearPills()
+			addPill("Not found", col.red, true)
+			GameLbl.Text = "No player with that name"
+			busy = false
+			return
+		end
+
+		name = name or q
+		display = display or name
+		autoTarget = {id = id, name = name, display = display}
+		NameLbl.Text = display
+		SubLbl.Text = ("@%s  •  ID %d"):format(name, id)
+		loadAvatar(Avatar, id)
+
+		local inServerPlayer = Players:GetPlayerByUserId(id)
+		local inServer = inServerPlayer ~= nil
+		local p
+		if inServer then
+			p = {
+				userPresenceType = 2,
+				placeId = game.PlaceId,
+				rootPlaceId = game.PlaceId,
+				universeId = game.GameId,
+				gameId = game.JobId,
+			}
+		else
+			p = getPresence(id, autoSnipe)
+		end
+		if destroyed or sid ~= searchId then
+			return
+		end
+
+		local kind = p and p.userPresenceType
+		if p and (kind == 2 or inServer) then
+			local platform
+			if id == LocalPlayer.UserId then
+				platform = localPlatform()
+			else
+				platform = platformFromPresence(inServerPlayer) or platformFromPresence(p) or "unknown"
+			end
+			applyPlatformBadge(PlatformBadge, platform)
+		else
+			applyPlatformBadge(PlatformBadge, nil)
+		end
+		clearPills()
+		local showActions = false
+
+		if not p then
+			addPill("Request failed", col.red, true)
+			GameLbl.Text = "Try again in a few seconds"
+		elseif kind == 2 or inServer then
+			addPill("In game", col.green, true)
+			GameCaption.Text = "GAME"
+			GameLbl.Text = "Looking up..."
+
+			local place = positiveId(p.placeId) or positiveId(p.rootPlaceId)
+			local universe = positiveId(p.universeId)
+			local job = p.gameId
+			if inServer then
+				place, universe, job = positiveId(game.PlaceId), positiveId(game.GameId), game.JobId
+			end
+
+			current = {place = place, job = job, inServer = inServer}
+			if not inServer then
+				local canJoin = job ~= nil and job ~= ""
+				addPill(canJoin and "Joins on" or "Joins off", canJoin and col.green or col.red)
+			end
+			if place then
+				showActions = true
+				layoutActions(job ~= nil and job ~= "" and not inServer)
+			end
+			if place or universe then
+				task.spawn(function()
+					local resolved = positiveId(universe)
+					if not resolved and place then
+						resolved = resolveUniverse(place)
+						if destroyed or sid ~= searchId then
+							return
+						end
+					end
+					if not resolved or destroyed or sid ~= searchId then
+						return
+					end
+					loadGameIcon(GameImage, resolved, place)
+				end)
+			end
+
+			if inServer and isRealName(game.Name) then
+				GameLbl.Text = game.Name
+			else
+				task.spawn(function()
+					local gameName = getGameName(p, place, universe)
+					if destroyed or sid ~= searchId then
+						return
+					end
+					GameLbl.Text = gameName or "Hidden by privacy settings"
+				end)
+			end
+		elseif kind == 1 then
+			addPill("Online", col.blue, true)
+			GameCaption.Text = "STATUS"
+			GameLbl.Text = "Not in a game"
+		elseif kind == 3 then
+			addPill("In Studio", col.orange, true)
+			GameCaption.Text = "STATUS"
+			GameLbl.Text = "Editing in Studio"
+		else
+			addPill("Offline", col.dim, true)
+			local seen = p.lastOnline and ago(p.lastOnline)
+			GameCaption.Text = "LAST ONLINE"
+			GameLbl.Text = seen or "Unknown"
+		end
+
+		Actions.Visible = showActions
+		busy = false
+
+		if autoSnipe and sid == searchId then
+			if inServer then
+				toast("Already in your server", col.blue)
+			elseif current and current.place and current.job and current.job ~= "" then
+				tryAutoJoin()
+			elseif autoTarget then
+				startAutoPoll(autoTarget)
+			end
+		end
+
+		if id == LocalPlayer.UserId then
+			addPill("You", col.white)
+		else
+			local ok, friend = pcall(LocalPlayer.IsFriendsWith, LocalPlayer, id)
+			if destroyed or sid ~= searchId then
+				return
+			end
+			addPill(ok and friend and "Friend" or "Not friends", ok and friend and col.green or col.dim)
+			if isBlocked(id) then
+				addPill("Blocked", col.red)
+			end
+			if inServer then
+				addPill("In your server", col.blue)
+			elseif current and current.place == game.PlaceId then
+				addPill("Same game as you", col.blue)
+			end
+		end
+	end)
+end
+
+function tryAutoJoin()
+	if joining or not autoSnipe or destroyed or not current or not current.place or not current.job or current.job == "" or current.inServer then
+		return false
+	end
+	autoToken += 1
+	local token = autoToken
+	local target = autoTarget
+	toast("AutoSnipe: joining...", col.green)
+	task.delay(0.15, function()
+		if autoSnipe and not destroyed and autoToken == token then
+			local joined = joinCurrent()
+			if joined then
+				local watchToken = autoToken
+				task.delay(10, function()
+					if autoSnipe and not destroyed and autoToken == watchToken and autoTarget == target and not joining then
+						if target and target.id and not Players:GetPlayerByUserId(target.id) then
+							startAutoPoll(target)
+						end
+					end
+				end)
+			elseif autoSnipe and not destroyed and autoTarget == target and not joining then
+				task.delay(2.5, function()
+					if autoSnipe and not destroyed and autoTarget == target and not joining then
+						startAutoPoll(target)
+					end
+				end)
+			end
+		end
+	end)
+	return true
+end
+
+function startAutoPoll(target)
+	if not target or not target.id then
+		return
+	end
+	autoToken += 1
+	local token = autoToken
+	toast("AutoSnipe: waiting for " .. (target.display or target.name or "target"), col.blue)
+	task.spawn(function()
+		while autoSnipe and not destroyed and autoToken == token do
+			task.wait(2)
+			if not autoSnipe or destroyed or autoToken ~= token then
+				break
+			end
+			local p = getPresence(target.id, true)
+			if not autoSnipe or destroyed or autoToken ~= token then
+				break
+			end
+			if p and p.userPresenceType == 2 and p.gameId and p.gameId ~= "" and (positiveId(p.placeId) or positiveId(p.rootPlaceId)) then
+				if not busy and not joining then
+					search(target.name)
+					return
+				end
+			end
+		end
+	end)
+end
+
+function setAutoSnipe(on)
+	on = on and true or false
+	if autoSnipe == on then
+		return
+	end
+	autoSnipe = on
+	autoToken += 1
+	if not on then
+		autoTarget = nil
+	end
+	refreshAutoUI()
+	toast(on and "AutoSnipe ON" or "AutoSnipe OFF", on and col.green or col.dim)
+	if not on then
+		return
+	end
+	if current and current.place and current.job and current.job ~= "" and not current.inServer then
+		tryAutoJoin()
+	elseif current and current.inServer then
+		toast("Already in your server", col.blue)
+	elseif autoTarget then
+		startAutoPoll(autoTarget)
+	elseif InpBox.Text:match("%S") then
+		search()
+	end
+end
+
+function setAntiAfk(on)
+	on = on and true or false
+	if antiAfk == on then
+		return
+	end
+	antiAfk = on
+	refreshAntiAfkUI()
+	toast(on and "Anti-AFK ON" or "Anti-AFK OFF", on and col.green or col.dim)
+end
+
+bind(LocalPlayer.Idled, function()
+	if not antiAfk or destroyed or not VirtualUser then
+		return
+	end
+	pcall(function()
+		VirtualUser:CaptureController()
+		VirtualUser:ClickButton2(Vector2.new())
+	end)
+end)
+
+function joinCurrent()
+	if joining or destroyed then
+		return false
+	end
+	if not current or not current.place or not current.job or current.job == "" then
+		toast("No joinable server", col.red)
+		return false
+	end
+	if current.inServer then
+		toast("Already in your server", col.blue)
+		return false
+	end
+	autoToken += 1
+	joining = true
+	toast("Joining...", col.green)
+	local ok = pcall(TeleportService.TeleportToPlaceInstance, TeleportService, current.place, current.job, LocalPlayer)
+	if not ok then
+		joining = false
+		toast("Join blocked — joins may be off", col.red)
+		return false
+	end
+	task.delay(8, function()
+		joining = false
+	end)
+	return true
+end
+
+bind(TeleportService.TeleportInitFailed, function(_, _, message)
+	local wasJoining = joining
+	joining = false
+	if not destroyed then
+		toast("Join failed: " .. tostring(message or "blocked"), col.red)
+	end
+	local target = autoTarget
+	if wasJoining and autoSnipe and not destroyed and target then
+		task.delay(3, function()
+			if autoSnipe and not destroyed and autoTarget == target and not joining then
+				startAutoPoll(target)
+			end
+		end)
+	end
+end)
+
+snipe = function(name)
+	InpBox.Text = name
+	setTabByName("Sniper")
+	search(name)
+end
+
+SnipeButton.MouseButton1Click:Connect(function()
+	search()
+end)
+
+InpBox.FocusLost:Connect(function(enter)
+	tween(InputStroke, 0.2, {Transparency = 0.86})
+	tween(InputFrame, 0.2, {BackgroundColor3 = col.panel})
+	if enter then
+		search()
+	end
+end)
+
+JoinBtn.MouseButton1Click:Connect(joinCurrent)
+
+CopyBtn.MouseButton1Click:Connect(function()
+	if not current or not current.place then
+		return
+	end
+	if copy("https://www.roblox.com/games/" .. current.place) then
+		CopyLbl.Text = "Copied"
+		toast("Game link copied", col.green)
+	else
+		toast("Clipboard unavailable", col.red)
+	end
+	task.delay(1.5, function()
+		CopyLbl.Text = "Copy link"
+	end)
+end)
+
+setTab(1, true)
+env.__PlayerSniper = UI
+open()
+end
+
+__ssRun()
